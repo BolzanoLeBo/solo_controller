@@ -358,7 +358,7 @@ async function connectBle() {
     }
 
     sendTimer = setInterval(sendMotionCommand, 50); // 20 Hz
-    await sendRawAscii("0,0,0\r");
+    await sendRawAscii("BEGIN COMMUNICATION\r\n");
 
   } catch (err) {
     setStatus("Error: " + err.message);
