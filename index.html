@@ -214,7 +214,7 @@
   </div>
 
   <div id="status">Disconnected</div>
-  <div id="tx">TX: 0,0,0</div>
+  <div id="tx">TX: waiting</div>
   <div id="keys">Keys:</div>
 
   <div class="manual-box">
@@ -226,7 +226,7 @@
     </div>
 
     <div class="hint">
-      The page automatically appends carriage return: <code>\r</code>
+      Manual send appends carriage return: <code>\r</code>
     </div>
   </div>
 
@@ -304,8 +304,8 @@ const RX_UUID      = "49535343-8841-43f4-a8d4-ecbe34729bb3";
 let device = null;
 let rxChar = null;
 let activeKeys = new Set();
-let sendTimer = null;
 
+let sendTimer = null;
 let pendingMsg = null;
 let sending = false;
 
@@ -326,11 +326,29 @@ function updateKeyDebug() {
 
 function updateTxDebug(msg) {
   document.getElementById("tx").textContent =
-    "TX: " + msg.replace("\r", "\\r");
+    "TX: " + msg.replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+}
+
+function startMotionLoop() {
+  if (!sendTimer) {
+    sendTimer = setInterval(sendMotionCommand, 50); // 20 Hz while a motion button is held
+  }
+}
+
+function stopMotionLoop() {
+  if (sendTimer) {
+    clearInterval(sendTimer);
+    sendTimer = null;
+  }
 }
 
 async function connectBle() {
   try {
+    if (!navigator.bluetooth) {
+      setStatus("Web Bluetooth unavailable in this browser");
+      return;
+    }
+
     setStatus("Scanning...");
 
     /*
@@ -351,14 +369,9 @@ async function connectBle() {
     const service = await server.getPrimaryService(SERVICE_UUID);
     rxChar = await service.getCharacteristic(RX_UUID);
 
+    // Important: send nothing on connection.
     setStatus("Connected to " + (device.name || "BLE device"));
-
-    if (sendTimer) {
-      clearInterval(sendTimer);
-    }
-
-    sendTimer = setInterval(sendMotionCommand, 50); // 20 Hz
-    await sendRawAscii("BEGIN COMMUNICATION\r\n");
+    updateTxDebug("waiting");
 
   } catch (err) {
     setStatus("Error: " + err.message);
@@ -368,15 +381,10 @@ async function connectBle() {
 
 async function disconnectBle() {
   try {
-    await stopRobot();
-
+    // Important: disconnect sends no BLE command automatically.
     activeKeys.clear();
     updateKeyDebug();
-
-    if (sendTimer) {
-      clearInterval(sendTimer);
-      sendTimer = null;
-    }
+    stopMotionLoop();
 
     if (device && device.gatt && device.gatt.connected) {
       device.gatt.disconnect();
@@ -384,6 +392,7 @@ async function disconnectBle() {
 
     rxChar = null;
     setStatus("Disconnected");
+    updateTxDebug("waiting");
 
   } catch (err) {
     console.error("Disconnect failed:", err);
@@ -394,15 +403,11 @@ async function disconnectBle() {
 function onDisconnected() {
   activeKeys.clear();
   updateKeyDebug();
+  stopMotionLoop();
 
   rxChar = null;
-
-  if (sendTimer) {
-    clearInterval(sendTimer);
-    sendTimer = null;
-  }
-
   setStatus("Disconnected");
+  updateTxDebug("waiting");
 }
 
 function getMotionMessage() {
@@ -414,6 +419,10 @@ function getMotionMessage() {
 }
 
 async function sendMotionCommand() {
+  if (activeKeys.size === 0) {
+    return;
+  }
+
   const msg = getMotionMessage();
   await sendRawAscii(msg);
 }
@@ -426,14 +435,20 @@ async function sendManualAscii() {
     return;
   }
 
-  // Always append one carriage return.
-  text = text.replace(/\r?\n$/, "");
+  // Remove accidental line endings from the text box, then append exactly one CR.
+  text = text.replace(/[\r\n]+$/g, "");
   await sendRawAscii(text + "\r");
 }
 
 async function stopRobot() {
   activeKeys.clear();
   updateKeyDebug();
+  stopMotionLoop();
+  await sendRawAscii("0,0,0\r");
+}
+
+async function sendStopAfterRelease() {
+  stopMotionLoop();
   await sendRawAscii("0,0,0\r");
 }
 
@@ -474,9 +489,10 @@ async function sendRawAscii(msg) {
 }
 
 /*
-  Reliable phone controls:
-  - Press and hold a direction button.
-  - Release sends stop automatically through the 20 Hz loop.
+  Phone controls:
+  - Connection sends nothing.
+  - Press and hold a direction/rotation button to stream at 20 Hz.
+  - Releasing the last active button sends one stop command: 0,0,0\r.
 */
 for (const btn of document.querySelectorAll("[data-key]")) {
   const key = btn.dataset.key;
@@ -492,7 +508,8 @@ for (const btn of document.querySelectorAll("[data-key]")) {
     activeKeys.add(key);
     updateKeyDebug();
 
-    await sendMotionCommand();
+    startMotionLoop();
+    await sendRawAscii(getMotionMessage());
   });
 
   btn.addEventListener("pointerup", async e => {
@@ -502,7 +519,11 @@ for (const btn of document.querySelectorAll("[data-key]")) {
     activeKeys.delete(key);
     updateKeyDebug();
 
-    await sendMotionCommand();
+    if (activeKeys.size === 0) {
+      await sendStopAfterRelease();
+    } else {
+      await sendRawAscii(getMotionMessage());
+    }
   });
 
   btn.addEventListener("pointercancel", async e => {
@@ -512,7 +533,11 @@ for (const btn of document.querySelectorAll("[data-key]")) {
     activeKeys.delete(key);
     updateKeyDebug();
 
-    await sendMotionCommand();
+    if (activeKeys.size === 0) {
+      await sendStopAfterRelease();
+    } else {
+      await sendRawAscii(getMotionMessage());
+    }
   });
 
   btn.addEventListener("lostpointercapture", async () => {
@@ -520,7 +545,11 @@ for (const btn of document.querySelectorAll("[data-key]")) {
     activeKeys.delete(key);
     updateKeyDebug();
 
-    await sendMotionCommand();
+    if (activeKeys.size === 0) {
+      await sendStopAfterRelease();
+    } else {
+      await sendRawAscii(getMotionMessage());
+    }
   });
 }
 
@@ -531,7 +560,9 @@ window.addEventListener("keydown", e => {
   if ("zsqdae".includes(k)) {
     activeKeys.add(k);
     updateKeyDebug();
-    sendMotionCommand();
+
+    startMotionLoop();
+    sendRawAscii(getMotionMessage());
   }
 });
 
@@ -541,7 +572,12 @@ window.addEventListener("keyup", e => {
   if ("zsqdae".includes(k)) {
     activeKeys.delete(k);
     updateKeyDebug();
-    sendMotionCommand();
+
+    if (activeKeys.size === 0) {
+      sendStopAfterRelease();
+    } else {
+      sendRawAscii(getMotionMessage());
+    }
   }
 });
 
