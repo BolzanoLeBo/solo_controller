@@ -32,7 +32,7 @@
       font-size: 24px;
     }
 
-    .top-bar {
+    .top-bar, .test-row {
       display: flex;
       justify-content: center;
       gap: 10px;
@@ -86,7 +86,7 @@
       min-height: 24px;
     }
 
-    #tx, #keys, #lastResult {
+    #tx, #keys, #lastResult, #props {
       font-family: monospace;
       font-size: 15px;
       margin: 4px auto;
@@ -96,7 +96,7 @@
 
     .manual-box, .log-box {
       margin: 18px auto;
-      max-width: 520px;
+      max-width: 560px;
       padding: 14px;
       border: 1px solid #333;
       border-radius: 16px;
@@ -107,6 +107,7 @@
       display: flex;
       gap: 8px;
       margin-top: 10px;
+      flex-wrap: wrap;
     }
 
     input, select {
@@ -120,11 +121,7 @@
 
     input {
       flex: 1;
-      min-width: 0;
-    }
-
-    select {
-      max-width: 120px;
+      min-width: 180px;
     }
 
     .hint {
@@ -139,18 +136,10 @@
       font-size: 13px;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
-      max-height: 150px;
+      max-height: 180px;
       overflow-y: auto;
       margin-top: 8px;
       color: #ddd;
-    }
-
-    .test-row {
-      display: flex;
-      justify-content: center;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin-top: 10px;
     }
 
     .controller {
@@ -210,6 +199,10 @@
       line-height: 1.05;
     }
 
+    code {
+      color: #ddd;
+    }
+
     @media (max-width: 480px) {
       :root {
         --btn-size: 82px;
@@ -228,14 +221,6 @@
         width: 96px;
         height: 76px;
       }
-
-      .manual-row {
-        flex-wrap: wrap;
-      }
-
-      input {
-        flex-basis: 100%;
-      }
     }
   </style>
 </head>
@@ -253,18 +238,28 @@
   <div id="tx">TX: waiting</div>
   <div id="keys">Keys:</div>
   <div id="lastResult">Last write: none</div>
+  <div id="props">RX properties: unknown</div>
 
   <div class="manual-box">
     <div><b>Manual ASCII send</b></div>
 
     <div class="manual-row">
       <input id="manualInput" type="text" placeholder="Example: 0,1,0">
+
       <select id="endingSelect">
         <option value="cr" selected>CR \r</option>
         <option value="lf">LF \n</option>
         <option value="crlf">CRLF \r\n</option>
         <option value="none">none</option>
       </select>
+
+      <select id="writeModeSelect">
+        <option value="withResponse" selected>Write response</option>
+        <option value="withoutResponse">Write no resp</option>
+        <option value="legacy">Legacy write</option>
+        <option value="auto">Auto</option>
+      </select>
+
       <button class="small" onclick="sendManualAscii()">Send</button>
     </div>
 
@@ -272,10 +267,12 @@
       <button class="small" onclick="sendRawAscii('0,1,0\r')">Test forward CR</button>
       <button class="small" onclick="sendRawAscii('0,0,0\r')">Test stop CR</button>
       <button class="small" onclick="sendRawAscii('PING\r')">Test PING CR</button>
+      <button class="small" onclick="sendRawAscii('PING\r\n')">Test PING CRLF</button>
     </div>
 
     <div class="hint">
-      For the robot protocol use CR <code>\r</code>. Use CRLF only for serial-terminal display debugging.
+      Default write mode is <b>Write response</b>, because nRF Connect often writes this way.
+      Try <b>Write no resp</b> only if response mode fails.
     </div>
   </div>
 
@@ -352,7 +349,10 @@
 <script>
 const DEVICE_NAME = "SOLO12";
 
+// RN4870/BM70 Transparent UART primary service.
 const SERVICE_UUID = "49535343-fe7d-4ae5-8fa9-9fafd205e455";
+
+// Client -> RN4870 UART data characteristic.
 const RX_UUID      = "49535343-8841-43f4-a8d4-ecbe34729bb3";
 
 let device = null;
@@ -392,10 +392,27 @@ function updateLastResult(text) {
   document.getElementById("lastResult").textContent = "Last write: " + text;
 }
 
+function updateProps() {
+  if (!rxChar) {
+    document.getElementById("props").textContent = "RX properties: unknown";
+    return;
+  }
+
+  const p = rxChar.properties;
+  const text =
+    "write=" + p.write +
+    ", writeWithoutResponse=" + p.writeWithoutResponse +
+    ", notify=" + p.notify +
+    ", read=" + p.read;
+
+  document.getElementById("props").textContent = "RX properties: " + text;
+  addLog("RX characteristic properties: " + text);
+}
+
 function addLog(text) {
   const stamp = new Date().toLocaleTimeString();
   logLines.unshift(stamp + "  " + text);
-  logLines = logLines.slice(0, 20);
+  logLines = logLines.slice(0, 24);
   document.getElementById("sendLog").textContent = logLines.join("\n");
 }
 
@@ -431,13 +448,20 @@ async function connectBle() {
     setStatus("Connecting...");
     const server = await device.gatt.connect();
 
+    addLog("device selected: " + (device.name || "unnamed BLE device"));
+    addLog("getting service: " + SERVICE_UUID);
+
     const service = await server.getPrimaryService(SERVICE_UUID);
+
+    addLog("getting RX characteristic: " + RX_UUID);
+
     rxChar = await service.getCharacteristic(RX_UUID);
 
     // Important: send nothing on connection.
     setStatus("Connected to " + (device.name || "BLE device"));
     updateTxDebug("waiting");
     updateLastResult("none");
+    updateProps();
     addLog("connected; no data sent");
 
   } catch (err) {
@@ -462,6 +486,7 @@ async function disconnectBle() {
     setStatus("Disconnected");
     updateTxDebug("waiting");
     updateLastResult("none");
+    updateProps();
     addLog("disconnected; no data sent");
 
   } catch (err) {
@@ -480,6 +505,7 @@ function onDisconnected() {
   setStatus("Disconnected");
   updateTxDebug("waiting");
   updateLastResult("none");
+  updateProps();
   addLog("GATT disconnected");
 }
 
@@ -534,23 +560,53 @@ async function sendStopAfterRelease() {
 }
 
 async function writeGatt(data) {
-  // Brave/Chrome versions differ. Try modern methods first, then legacy writeValue.
-  if (rxChar.properties.writeWithoutResponse && typeof rxChar.writeValueWithoutResponse === "function") {
-    await rxChar.writeValueWithoutResponse(data);
-    return "writeWithoutResponse";
+  const mode = document.getElementById("writeModeSelect").value;
+
+  if (mode === "withResponse") {
+    if (typeof rxChar.writeValueWithResponse === "function") {
+      await rxChar.writeValueWithResponse(data);
+      return "writeValueWithResponse";
+    }
+    if (typeof rxChar.writeValue === "function") {
+      await rxChar.writeValue(data);
+      return "legacy writeValue fallback";
+    }
+    throw new Error("writeValueWithResponse unavailable");
   }
 
+  if (mode === "withoutResponse") {
+    if (typeof rxChar.writeValueWithoutResponse === "function") {
+      await rxChar.writeValueWithoutResponse(data);
+      return "writeValueWithoutResponse";
+    }
+    throw new Error("writeValueWithoutResponse unavailable");
+  }
+
+  if (mode === "legacy") {
+    if (typeof rxChar.writeValue === "function") {
+      await rxChar.writeValue(data);
+      return "legacy writeValue";
+    }
+    throw new Error("legacy writeValue unavailable");
+  }
+
+  // Auto mode: prefer with-response for RN4870 debugging.
   if (rxChar.properties.write && typeof rxChar.writeValueWithResponse === "function") {
     await rxChar.writeValueWithResponse(data);
-    return "writeWithResponse";
+    return "auto writeValueWithResponse";
+  }
+
+  if (rxChar.properties.writeWithoutResponse && typeof rxChar.writeValueWithoutResponse === "function") {
+    await rxChar.writeValueWithoutResponse(data);
+    return "auto writeValueWithoutResponse";
   }
 
   if (typeof rxChar.writeValue === "function") {
     await rxChar.writeValue(data);
-    return "legacy writeValue";
+    return "auto legacy writeValue";
   }
 
-  throw new Error("No supported GATT write method on this browser");
+  throw new Error("No supported GATT write method");
 }
 
 async function sendRawAscii(msg) {
@@ -562,8 +618,6 @@ async function sendRawAscii(msg) {
   }
 
   updateTxDebug(msg);
-
-  // Keep latest motion packet only, but always enqueue manual/test/stop writes.
   sendQueue.push(msg);
 
   if (sending) {
