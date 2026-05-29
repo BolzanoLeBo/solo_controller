@@ -1,0 +1,203 @@
+<!doctype html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SOLO12 BLE Controller</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      text-align: center;
+      margin: 20px;
+      user-select: none;
+      touch-action: none;
+    }
+
+    button {
+      font-size: 28px;
+      padding: 22px;
+      margin: 8px;
+      min-width: 90px;
+      border-radius: 12px;
+    }
+
+    .small {
+      font-size: 18px;
+      padding: 14px;
+    }
+
+    #status {
+      margin: 16px;
+      font-weight: bold;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, 100px);
+      justify-content: center;
+      gap: 8px;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+
+<body>
+  <h2>SOLO12 BLE Controller</h2>
+
+  <button class="small" onclick="connectBle()">Connect</button>
+  <button class="small" onclick="stopRobot()">STOP</button>
+
+  <div id="status">Disconnected</div>
+  <div id="tx">TX: 0,0,0</div>
+
+  <div class="grid">
+    <div></div>
+    <button data-key="z">Z<br>Front</button>
+    <div></div>
+
+    <button data-key="q">Q<br>Left</button>
+    <button data-key="s">S<br>Back</button>
+    <button data-key="d">D<br>Right</button>
+
+    <button data-key="a">A<br>Rot L</button>
+    <div></div>
+    <button data-key="e">E<br>Rot R</button>
+  </div>
+
+<script>
+const DEVICE_NAME = "SOLO12";
+
+const SERVICE_UUID = "49535343-fe7d-4ae5-8fa9-9fafd205e455";
+const RX_UUID      = "49535343-8841-43f4-a8d4-ecbe34729bb3";
+
+let device = null;
+let rxChar = null;
+let activeKeys = new Set();
+let sendTimer = null;
+let sending = false;
+
+function axis(neg, pos) {
+  if (neg && !pos) return -1;
+  if (pos && !neg) return 1;
+  return 0;
+}
+
+async function connectBle() {
+  try {
+    document.getElementById("status").textContent = "Scanning...";
+
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: DEVICE_NAME }],
+      optionalServices: [SERVICE_UUID]
+    });
+
+    device.addEventListener("gattserverdisconnected", onDisconnected);
+
+    document.getElementById("status").textContent = "Connecting...";
+    const server = await device.gatt.connect();
+
+    const service = await server.getPrimaryService(SERVICE_UUID);
+    rxChar = await service.getCharacteristic(RX_UUID);
+
+    document.getElementById("status").textContent = "Connected to " + device.name;
+
+    if (sendTimer) clearInterval(sendTimer);
+    sendTimer = setInterval(sendCommand, 50); // 20 Hz, same as Python
+  } catch (err) {
+    document.getElementById("status").textContent = "Error: " + err.message;
+    console.error(err);
+  }
+}
+
+async function sendCommand() {
+  if (!rxChar || sending) return;
+
+  const vx = axis(activeKeys.has("q"), activeKeys.has("d"));
+  const vy = axis(activeKeys.has("s"), activeKeys.has("z"));
+  const wz = axis(activeKeys.has("a"), activeKeys.has("e"));
+
+  const msg = `${vx},${vy},${wz}\r`;
+  document.getElementById("tx").textContent = "TX: " + msg.trim();
+
+  const data = new TextEncoder().encode(msg);
+
+  try {
+    sending = true;
+
+    if (rxChar.properties.writeWithoutResponse) {
+      await rxChar.writeValueWithoutResponse(data);
+    } else {
+      await rxChar.writeValueWithResponse(data);
+    }
+  } catch (err) {
+    console.error("Write failed:", err);
+  } finally {
+    sending = false;
+  }
+}
+
+async function stopRobot() {
+  activeKeys.clear();
+
+  if (!rxChar) return;
+
+  const data = new TextEncoder().encode("0,0,0\r");
+
+  try {
+    if (rxChar.properties.writeWithoutResponse) {
+      await rxChar.writeValueWithoutResponse(data);
+    } else {
+      await rxChar.writeValueWithResponse(data);
+    }
+
+    document.getElementById("tx").textContent = "TX: 0,0,0";
+  } catch (err) {
+    console.error("Stop failed:", err);
+  }
+}
+
+function onDisconnected() {
+  document.getElementById("status").textContent = "Disconnected";
+  rxChar = null;
+
+  if (sendTimer) {
+    clearInterval(sendTimer);
+    sendTimer = null;
+  }
+}
+
+// Touch buttons
+for (const btn of document.querySelectorAll("[data-key]")) {
+  const key = btn.dataset.key;
+
+  btn.addEventListener("touchstart", e => {
+    e.preventDefault();
+    activeKeys.add(key);
+  });
+
+  btn.addEventListener("touchend", e => {
+    e.preventDefault();
+    activeKeys.delete(key);
+  });
+
+  btn.addEventListener("touchcancel", e => {
+    e.preventDefault();
+    activeKeys.delete(key);
+  });
+
+  // Also allow mouse testing on PC
+  btn.addEventListener("mousedown", () => activeKeys.add(key));
+  btn.addEventListener("mouseup", () => activeKeys.delete(key));
+  btn.addEventListener("mouseleave", () => activeKeys.delete(key));
+}
+
+// Keyboard testing if opened on a computer
+window.addEventListener("keydown", e => {
+  activeKeys.add(e.key.toLowerCase());
+});
+
+window.addEventListener("keyup", e => {
+  activeKeys.delete(e.key.toLowerCase());
+});
+</script>
+</body>
+</html>
