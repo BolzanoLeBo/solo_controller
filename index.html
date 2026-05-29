@@ -3,39 +3,203 @@
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SOLO12 BLE Controller</title>
+
   <style>
-    body {
-      font-family: sans-serif;
+    :root {
+      --btn-size: 92px;
+      --gap: 10px;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
       text-align: center;
-      margin: 20px;
+      background: #111;
+      color: #eee;
       user-select: none;
+      -webkit-user-select: none;
       touch-action: none;
+      overscroll-behavior: none;
+    }
+
+    body {
+      padding: 18px;
+    }
+
+    h2 {
+      margin: 8px 0 14px;
+      font-size: 24px;
+    }
+
+    .top-bar {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
     }
 
     button {
-      font-size: 28px;
-      padding: 22px;
-      margin: 8px;
+      border: none;
+      border-radius: 16px;
+      background: #2f2f2f;
+      color: #fff;
+      font-size: 22px;
+      font-weight: 700;
+      padding: 14px 18px;
       min-width: 90px;
-      border-radius: 12px;
+      min-height: 64px;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    button:active,
+    button.active {
+      background: #666;
+      transform: scale(0.97);
     }
 
     .small {
-      font-size: 18px;
-      padding: 14px;
+      font-size: 17px;
+      min-height: 48px;
+      padding: 10px 14px;
+      border-radius: 12px;
+    }
+
+    .connect {
+      background: #1f6f3f;
+    }
+
+    .disconnect {
+      background: #7a2e2e;
+    }
+
+    .stop {
+      background: #a73333;
     }
 
     #status {
-      margin: 16px;
-      font-weight: bold;
+      margin: 10px auto;
+      font-weight: 700;
+      min-height: 24px;
     }
 
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(3, 100px);
-      justify-content: center;
+    #tx, #keys {
+      font-family: monospace;
+      font-size: 16px;
+      margin: 4px auto;
+      min-height: 22px;
+    }
+
+    .manual-box {
+      margin: 18px auto;
+      max-width: 460px;
+      padding: 14px;
+      border: 1px solid #333;
+      border-radius: 16px;
+      background: #1a1a1a;
+    }
+
+    .manual-row {
+      display: flex;
       gap: 8px;
-      margin-top: 20px;
+      margin-top: 10px;
+    }
+
+    input {
+      flex: 1;
+      min-width: 0;
+      font-size: 18px;
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid #555;
+      background: #0b0b0b;
+      color: #fff;
+    }
+
+    .hint {
+      font-size: 13px;
+      color: #aaa;
+      margin-top: 8px;
+    }
+
+    .controller {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 26px;
+      margin-top: 22px;
+      flex-wrap: wrap;
+    }
+
+    .dpad {
+      display: grid;
+      grid-template-columns: var(--btn-size) var(--btn-size) var(--btn-size);
+      grid-template-rows: var(--btn-size) var(--btn-size) var(--btn-size);
+      gap: var(--gap);
+      justify-content: center;
+      align-items: center;
+    }
+
+    .dpad button {
+      width: var(--btn-size);
+      height: var(--btn-size);
+      padding: 0;
+      font-size: 34px;
+    }
+
+    .empty {
+      width: var(--btn-size);
+      height: var(--btn-size);
+    }
+
+    .rotation {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .rotation button {
+      width: 115px;
+      height: 82px;
+      font-size: 34px;
+    }
+
+    .label {
+      font-size: 13px;
+      color: #aaa;
+      font-weight: 500;
+      margin-top: 4px;
+    }
+
+    .button-content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      line-height: 1.05;
+    }
+
+    @media (max-width: 480px) {
+      :root {
+        --btn-size: 82px;
+        --gap: 8px;
+      }
+
+      .controller {
+        gap: 16px;
+      }
+
+      .rotation {
+        flex-direction: row;
+      }
+
+      .rotation button {
+        width: 96px;
+        height: 76px;
+      }
     }
   </style>
 </head>
@@ -43,24 +207,92 @@
 <body>
   <h2>SOLO12 BLE Controller</h2>
 
-  <button class="small" onclick="connectBle()">Connect</button>
-  <button class="small" onclick="stopRobot()">STOP</button>
+  <div class="top-bar">
+    <button class="small connect" onclick="connectBle()">Connect</button>
+    <button class="small disconnect" onclick="disconnectBle()">Disconnect</button>
+    <button class="small stop" onclick="stopRobot()">STOP</button>
+  </div>
 
   <div id="status">Disconnected</div>
   <div id="tx">TX: 0,0,0</div>
+  <div id="keys">Keys:</div>
 
-  <div class="grid">
-    <div></div>
-    <button data-key="z">Z<br>Front</button>
-    <div></div>
+  <div class="manual-box">
+    <div><b>Manual ASCII send</b></div>
 
-    <button data-key="q">Q<br>Left</button>
-    <button data-key="s">S<br>Back</button>
-    <button data-key="d">D<br>Right</button>
+    <div class="manual-row">
+      <input id="manualInput" type="text" placeholder="Example: 0,1,0">
+      <button class="small" onclick="sendManualAscii()">Send</button>
+    </div>
 
-    <button data-key="a">A<br>Rot L</button>
-    <div></div>
-    <button data-key="e">E<br>Rot R</button>
+    <div class="hint">
+      The page automatically appends carriage return: <code>\r</code>
+    </div>
+  </div>
+
+  <div class="controller">
+    <div>
+      <div class="dpad">
+        <div class="empty"></div>
+
+        <button data-key="z">
+          <div class="button-content">
+            ↑
+            <span class="label">Front</span>
+          </div>
+        </button>
+
+        <div class="empty"></div>
+
+        <button data-key="q">
+          <div class="button-content">
+            ←
+            <span class="label">Left</span>
+          </div>
+        </button>
+
+        <button class="stop" onclick="stopRobot()">
+          <div class="button-content">
+            ■
+            <span class="label">Stop</span>
+          </div>
+        </button>
+
+        <button data-key="d">
+          <div class="button-content">
+            →
+            <span class="label">Right</span>
+          </div>
+        </button>
+
+        <div class="empty"></div>
+
+        <button data-key="s">
+          <div class="button-content">
+            ↓
+            <span class="label">Back</span>
+          </div>
+        </button>
+
+        <div class="empty"></div>
+      </div>
+    </div>
+
+    <div class="rotation">
+      <button data-key="a">
+        <div class="button-content">
+          ↶
+          <span class="label">Rot L</span>
+        </div>
+      </button>
+
+      <button data-key="e">
+        <div class="button-content">
+          ↷
+          <span class="label">Rot R</span>
+        </div>
+      </button>
+    </div>
   </div>
 
 <script>
@@ -73,6 +305,8 @@ let device = null;
 let rxChar = null;
 let activeKeys = new Set();
 let sendTimer = null;
+
+let pendingMsg = null;
 let sending = false;
 
 function axis(neg, pos) {
@@ -81,122 +315,241 @@ function axis(neg, pos) {
   return 0;
 }
 
+function setStatus(text) {
+  document.getElementById("status").textContent = text;
+}
+
+function updateKeyDebug() {
+  document.getElementById("keys").textContent =
+    "Keys: " + Array.from(activeKeys).join(",");
+}
+
+function updateTxDebug(msg) {
+  document.getElementById("tx").textContent =
+    "TX: " + msg.replace("\r", "\\r");
+}
+
 async function connectBle() {
   try {
-    document.getElementById("status").textContent = "Scanning...";
+    setStatus("Scanning...");
 
+    /*
+      Debug-friendly scan:
+      This shows all nearby BLE devices.
+      Choose SOLO12 from the browser popup.
+    */
     device = await navigator.bluetooth.requestDevice({
-      filters: [{ namePrefix: DEVICE_NAME }],
+      acceptAllDevices: true,
       optionalServices: [SERVICE_UUID]
     });
 
     device.addEventListener("gattserverdisconnected", onDisconnected);
 
-    document.getElementById("status").textContent = "Connecting...";
+    setStatus("Connecting...");
     const server = await device.gatt.connect();
 
     const service = await server.getPrimaryService(SERVICE_UUID);
     rxChar = await service.getCharacteristic(RX_UUID);
 
-    document.getElementById("status").textContent = "Connected to " + device.name;
+    setStatus("Connected to " + (device.name || "BLE device"));
 
-    if (sendTimer) clearInterval(sendTimer);
-    sendTimer = setInterval(sendCommand, 50); // 20 Hz, same as Python
+    if (sendTimer) {
+      clearInterval(sendTimer);
+    }
+
+    sendTimer = setInterval(sendMotionCommand, 50); // 20 Hz
+    await sendRawAscii("0,0,0\r");
+
   } catch (err) {
-    document.getElementById("status").textContent = "Error: " + err.message;
+    setStatus("Error: " + err.message);
     console.error(err);
   }
 }
 
-async function sendCommand() {
-  if (!rxChar || sending) return;
-
-  const vx = axis(activeKeys.has("q"), activeKeys.has("d"));
-  const vy = axis(activeKeys.has("s"), activeKeys.has("z"));
-  const wz = axis(activeKeys.has("a"), activeKeys.has("e"));
-
-  const msg = `${vx},${vy},${wz}\r`;
-  document.getElementById("tx").textContent = "TX: " + msg.trim();
-
-  const data = new TextEncoder().encode(msg);
-
+async function disconnectBle() {
   try {
-    sending = true;
+    await stopRobot();
 
-    if (rxChar.properties.writeWithoutResponse) {
-      await rxChar.writeValueWithoutResponse(data);
-    } else {
-      await rxChar.writeValueWithResponse(data);
-    }
-  } catch (err) {
-    console.error("Write failed:", err);
-  } finally {
-    sending = false;
-  }
-}
+    activeKeys.clear();
+    updateKeyDebug();
 
-async function stopRobot() {
-  activeKeys.clear();
-
-  if (!rxChar) return;
-
-  const data = new TextEncoder().encode("0,0,0\r");
-
-  try {
-    if (rxChar.properties.writeWithoutResponse) {
-      await rxChar.writeValueWithoutResponse(data);
-    } else {
-      await rxChar.writeValueWithResponse(data);
+    if (sendTimer) {
+      clearInterval(sendTimer);
+      sendTimer = null;
     }
 
-    document.getElementById("tx").textContent = "TX: 0,0,0";
+    if (device && device.gatt && device.gatt.connected) {
+      device.gatt.disconnect();
+    }
+
+    rxChar = null;
+    setStatus("Disconnected");
+
   } catch (err) {
-    console.error("Stop failed:", err);
+    console.error("Disconnect failed:", err);
+    setStatus("Disconnect error: " + err.message);
   }
 }
 
 function onDisconnected() {
-  document.getElementById("status").textContent = "Disconnected";
+  activeKeys.clear();
+  updateKeyDebug();
+
   rxChar = null;
 
   if (sendTimer) {
     clearInterval(sendTimer);
     sendTimer = null;
   }
+
+  setStatus("Disconnected");
 }
 
-// Touch buttons
+function getMotionMessage() {
+  const vx = axis(activeKeys.has("q"), activeKeys.has("d"));
+  const vy = axis(activeKeys.has("s"), activeKeys.has("z"));
+  const wz = axis(activeKeys.has("a"), activeKeys.has("e"));
+
+  return `${vx},${vy},${wz}\r`;
+}
+
+async function sendMotionCommand() {
+  const msg = getMotionMessage();
+  await sendRawAscii(msg);
+}
+
+async function sendManualAscii() {
+  const input = document.getElementById("manualInput");
+  let text = input.value;
+
+  if (!text.length) {
+    return;
+  }
+
+  // Always append one carriage return.
+  text = text.replace(/\r?\n$/, "");
+  await sendRawAscii(text + "\r");
+}
+
+async function stopRobot() {
+  activeKeys.clear();
+  updateKeyDebug();
+  await sendRawAscii("0,0,0\r");
+}
+
+async function sendRawAscii(msg) {
+  if (!rxChar) {
+    setStatus("Not connected");
+    return;
+  }
+
+  pendingMsg = msg;
+  updateTxDebug(msg);
+
+  if (sending) {
+    return;
+  }
+
+  sending = true;
+
+  try {
+    while (pendingMsg !== null) {
+      const currentMsg = pendingMsg;
+      pendingMsg = null;
+
+      const data = new TextEncoder().encode(currentMsg);
+
+      if (rxChar.properties.writeWithoutResponse) {
+        await rxChar.writeValueWithoutResponse(data);
+      } else {
+        await rxChar.writeValueWithResponse(data);
+      }
+    }
+  } catch (err) {
+    console.error("Write failed:", err);
+    setStatus("Write error: " + err.message);
+  } finally {
+    sending = false;
+  }
+}
+
+/*
+  Reliable phone controls:
+  - Press and hold a direction button.
+  - Release sends stop automatically through the 20 Hz loop.
+*/
 for (const btn of document.querySelectorAll("[data-key]")) {
   const key = btn.dataset.key;
 
-  btn.addEventListener("touchstart", e => {
+  btn.addEventListener("pointerdown", async e => {
     e.preventDefault();
+
+    try {
+      btn.setPointerCapture(e.pointerId);
+    } catch (_) {}
+
+    btn.classList.add("active");
     activeKeys.add(key);
+    updateKeyDebug();
+
+    await sendMotionCommand();
   });
 
-  btn.addEventListener("touchend", e => {
+  btn.addEventListener("pointerup", async e => {
     e.preventDefault();
+
+    btn.classList.remove("active");
     activeKeys.delete(key);
+    updateKeyDebug();
+
+    await sendMotionCommand();
   });
 
-  btn.addEventListener("touchcancel", e => {
+  btn.addEventListener("pointercancel", async e => {
     e.preventDefault();
+
+    btn.classList.remove("active");
     activeKeys.delete(key);
+    updateKeyDebug();
+
+    await sendMotionCommand();
   });
 
-  // Also allow mouse testing on PC
-  btn.addEventListener("mousedown", () => activeKeys.add(key));
-  btn.addEventListener("mouseup", () => activeKeys.delete(key));
-  btn.addEventListener("mouseleave", () => activeKeys.delete(key));
+  btn.addEventListener("lostpointercapture", async () => {
+    btn.classList.remove("active");
+    activeKeys.delete(key);
+    updateKeyDebug();
+
+    await sendMotionCommand();
+  });
 }
 
-// Keyboard testing if opened on a computer
+// Optional keyboard control for testing from a computer.
 window.addEventListener("keydown", e => {
-  activeKeys.add(e.key.toLowerCase());
+  const k = e.key.toLowerCase();
+
+  if ("zsqdae".includes(k)) {
+    activeKeys.add(k);
+    updateKeyDebug();
+    sendMotionCommand();
+  }
 });
 
 window.addEventListener("keyup", e => {
-  activeKeys.delete(e.key.toLowerCase());
+  const k = e.key.toLowerCase();
+
+  if ("zsqdae".includes(k)) {
+    activeKeys.delete(k);
+    updateKeyDebug();
+    sendMotionCommand();
+  }
+});
+
+// Send manual command when pressing Enter.
+document.getElementById("manualInput").addEventListener("keydown", e => {
+  if (e.key === "Enter") {
+    sendManualAscii();
+  }
 });
 </script>
 </body>
