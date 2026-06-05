@@ -241,10 +241,10 @@
   <div id="props">RX properties: unknown</div>
 
   <div class="manual-box">
-    <div><b>Manual ASCII send</b></div>
+    <div><b>Manual Binary Send (Comma separated 3 numbers)</b></div>
 
     <div class="manual-row">
-      <input id="manualInput" type="text" placeholder="Example: 0,1,0">
+      <input id="manualInput" type="text" placeholder="Example: 0,1,-1">
 
       <select id="endingSelect">
         <option value="cr" selected>CR \r</option>
@@ -260,19 +260,16 @@
         <option value="auto">Auto</option>
       </select>
 
-      <button class="small" onclick="sendManualAscii()">Send</button>
+      <button class="small" onclick="sendManualBinary()">Send</button>
     </div>
 
     <div class="test-row">
-      <button class="small" onclick="sendRawAscii('0,1,0\r')">Test forward CR</button>
-      <button class="small" onclick="sendRawAscii('0,0,0\r')">Test stop CR</button>
-      <button class="small" onclick="sendRawAscii('PING\r')">Test PING CR</button>
-      <button class="small" onclick="sendRawAscii('PING\r\n')">Test PING CRLF</button>
+      <button class="small" onclick="testBinaryCommand(0, 1, 0)">Test forward CR</button>
+      <button class="small" onclick="testBinaryCommand(0, 0, 0)">Test stop CR</button>
     </div>
 
     <div class="hint">
-      Default write mode is <b>Write response</b>, because nRF Connect often writes this way.
-      Try <b>Write no resp</b> only if response mode fails.
+      Les valeurs sont envoyées sous forme d'octets bruts (0 ou 1, ou 255 pour -1) encapsulés dans <code>% ... \r%</code>.
     </div>
   </div>
 
@@ -348,11 +345,7 @@
 
 <script>
 const DEVICE_NAME = "SOLO12";
-
-// RN4870/BM70 Transparent UART primary service.
 const SERVICE_UUID = "49535343-fe7d-4ae5-8fa9-9fafd205e455";
-
-// Client -> RN4870 UART data characteristic.
 const RX_UUID      = "49535343-8841-43f4-a8d4-ecbe34729bb3";
 
 let device = null;
@@ -375,8 +368,9 @@ function setStatus(text) {
   document.getElementById("status").textContent = text;
 }
 
-function displayText(s) {
-  return s.replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+// Convertit un Uint8Array en chaîne Hexadécimale lisible pour le débug
+function displayBuffer(buffer) {
+  return Array.from(buffer).map(b => '0x' + b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
 }
 
 function updateKeyDebug() {
@@ -384,8 +378,12 @@ function updateKeyDebug() {
     "Keys: " + Array.from(activeKeys).join(",");
 }
 
-function updateTxDebug(msg) {
-  document.getElementById("tx").textContent = "TX: " + displayText(msg);
+function updateTxDebug(buffer) {
+  if (typeof buffer === "string") {
+    document.getElementById("tx").textContent = "TX: " + buffer;
+  } else {
+    document.getElementById("tx").textContent = "TX (Hex): " + displayBuffer(buffer);
+  }
 }
 
 function updateLastResult(text) {
@@ -397,14 +395,8 @@ function updateProps() {
     document.getElementById("props").textContent = "RX properties: unknown";
     return;
   }
-
   const p = rxChar.properties;
-  const text =
-    "write=" + p.write +
-    ", writeWithoutResponse=" + p.writeWithoutResponse +
-    ", notify=" + p.notify +
-    ", read=" + p.read;
-
+  const text = "write=" + p.write + ", writeWithoutResponse=" + p.writeWithoutResponse + ", notify=" + p.notify + ", read=" + p.read;
   document.getElementById("props").textContent = "RX properties: " + text;
   addLog("RX characteristic properties: " + text);
 }
@@ -418,7 +410,7 @@ function addLog(text) {
 
 function startMotionLoop() {
   if (!sendTimer) {
-    sendTimer = setInterval(sendMotionCommand, 50); // 20 Hz while held
+    sendTimer = setInterval(sendMotionCommand, 50);
   }
 }
 
@@ -435,35 +427,22 @@ async function connectBle() {
       setStatus("Web Bluetooth unavailable in this browser");
       return;
     }
-
     setStatus("Scanning...");
-
     device = await navigator.bluetooth.requestDevice({
       acceptAllDevices: true,
       optionalServices: [SERVICE_UUID]
     });
-
     device.addEventListener("gattserverdisconnected", onDisconnected);
-
     setStatus("Connecting...");
     const server = await device.gatt.connect();
-
-    addLog("device selected: " + (device.name || "unnamed BLE device"));
-    addLog("getting service: " + SERVICE_UUID);
-
     const service = await server.getPrimaryService(SERVICE_UUID);
-
-    addLog("getting RX characteristic: " + RX_UUID);
-
     rxChar = await service.getCharacteristic(RX_UUID);
 
-    // Important: send nothing on connection.
     setStatus("Connected to " + (device.name || "BLE device"));
     updateTxDebug("waiting");
     updateLastResult("none");
     updateProps();
     addLog("connected; no data sent");
-
   } catch (err) {
     setStatus("Error: " + err.message);
     addLog("connect error: " + err.message);
@@ -473,22 +452,18 @@ async function connectBle() {
 
 async function disconnectBle() {
   try {
-    // Important: disconnect sends no BLE command automatically.
     activeKeys.clear();
     updateKeyDebug();
     stopMotionLoop();
-
     if (device && device.gatt && device.gatt.connected) {
       device.gatt.disconnect();
     }
-
     rxChar = null;
     setStatus("Disconnected");
     updateTxDebug("waiting");
     updateLastResult("none");
     updateProps();
     addLog("disconnected; no data sent");
-
   } catch (err) {
     console.error("Disconnect failed:", err);
     setStatus("Disconnect error: " + err.message);
@@ -500,7 +475,6 @@ function onDisconnected() {
   activeKeys.clear();
   updateKeyDebug();
   stopMotionLoop();
-
   rxChar = null;
   setStatus("Disconnected");
   updateTxDebug("waiting");
@@ -509,54 +483,79 @@ function onDisconnected() {
   addLog("GATT disconnected");
 }
 
-function getMotionMessage() {
+// Génère le Uint8Array final au format : [%][VX][VY][WZ][LineEnding][%]
+function buildBinaryMessage(vx, vy, wz, endingType = "cr") {
+  // Déterminer la taille des fins de ligne
+  let endingBytes = [];
+  if (endingType === "cr") endingBytes = [13];       // \r
+  if (endingType === "lf") endingBytes = [10];       // \n
+  if (endingType === "crlf") endingBytes = [13, 10];  // \r\n
+
+  // Structure : '%' (1 octet) + 3 axes (3 octets) + fin de ligne (0-2 octets) + '%' (1 octet)
+  const totalLength = 1 + 3 + endingBytes.length + 1;
+  const buffer = new Uint8Array(totalLength);
+
+  let index = 0;
+  buffer[index++] = 37; // '%' en ASCII
+
+  // Stockage des valeurs d'axes en octets bruts (0, 1, ou 255 pour -1)
+  buffer[index++] = vx & 0xFF;
+  buffer[index++] = vy & 0xFF;
+  buffer[index++] = wz & 0xFF;
+
+  // Ajout des fins de ligne
+  for (let b of endingBytes) {
+    buffer[index++] = b;
+  }
+
+  buffer[index++] = 37; // '%' en ASCII
+
+  return buffer;
+}
+
+function getMotionMessageBuffer() {
   const vx = axis(activeKeys.has("q"), activeKeys.has("d"));
   const vy = axis(activeKeys.has("s"), activeKeys.has("z"));
   const wz = axis(activeKeys.has("a"), activeKeys.has("e"));
-
-  return `${vx},${vy},${wz}\r`;
+  return buildBinaryMessage(vx, vy, wz, "cr");
 }
 
 async function sendMotionCommand() {
-  if (activeKeys.size === 0) {
-    return;
-  }
-
-  await sendRawAscii(getMotionMessage());
+  if (activeKeys.size === 0) return;
+  await sendRawBuffer(getMotionMessageBuffer());
 }
 
-function lineEnding() {
-  const value = document.getElementById("endingSelect").value;
-
-  if (value === "cr") return "\r";
-  if (value === "lf") return "\n";
-  if (value === "crlf") return "\r\n";
-  return "";
-}
-
-async function sendManualAscii() {
+async function sendManualBinary() {
   const input = document.getElementById("manualInput");
-  let text = input.value;
+  const text = input.value.trim();
+  if (!text.length) return;
 
-  if (!text.length) {
+  const parts = text.split(',').map(Number);
+  if (parts.length !== 3 || parts.some(isNaN)) {
+    alert("Veuillez entrer 3 nombres séparés par des virgules (ex: 0,1,0)");
     return;
   }
 
-  // Remove accidental line endings from the text box, then append the selected ending.
-  text = text.replace(/[\r\n]+$/g, "");
-  await sendRawAscii(text + lineEnding());
+  const endingValue = document.getElementById("endingSelect").value;
+  const buffer = buildBinaryMessage(parts[0], parts[1], parts[2], endingValue);
+  await sendRawBuffer(buffer);
+}
+
+async function testBinaryCommand(vx, vy, wz) {
+  const buffer = buildBinaryMessage(vx, vy, wz, "cr");
+  await sendRawBuffer(buffer);
 }
 
 async function stopRobot() {
   activeKeys.clear();
   updateKeyDebug();
   stopMotionLoop();
-  await sendRawAscii("0,0,0\r");
+  await sendRawBuffer(buildBinaryMessage(0, 0, 0, "cr"));
 }
 
 async function sendStopAfterRelease() {
   stopMotionLoop();
-  await sendRawAscii("0,0,0\r");
+  await sendRawBuffer(buildBinaryMessage(0, 0, 0, "cr"));
 }
 
 async function writeGatt(data) {
@@ -590,7 +589,6 @@ async function writeGatt(data) {
     throw new Error("legacy writeValue unavailable");
   }
 
-  // Auto mode: prefer with-response for RN4870 debugging.
   if (rxChar.properties.write && typeof rxChar.writeValueWithResponse === "function") {
     await rxChar.writeValueWithResponse(data);
     return "auto writeValueWithResponse";
@@ -609,7 +607,8 @@ async function writeGatt(data) {
   throw new Error("No supported GATT write method");
 }
 
-async function sendRawAscii(msg) {
+// Reçoit un Uint8Array au lieu d'une chaîne ASCII
+async function sendRawBuffer(buffer) {
   if (!rxChar) {
     setStatus("Not connected");
     updateLastResult("not connected");
@@ -617,24 +616,19 @@ async function sendRawAscii(msg) {
     return;
   }
 
-  updateTxDebug(msg);
-  sendQueue.push(msg);
+  updateTxDebug(buffer);
+  sendQueue.push(buffer);
 
-  if (sending) {
-    return;
-  }
-
+  if (sending) return;
   sending = true;
 
   try {
     while (sendQueue.length > 0) {
-      const currentMsg = sendQueue.shift();
-      const data = new TextEncoder().encode(currentMsg);
-
-      const mode = await writeGatt(data);
+      const currentBuffer = sendQueue.shift();
+      const mode = await writeGatt(currentBuffer);
       writeCount += 1;
 
-      const okText = "#" + writeCount + " OK via " + mode + ": " + displayText(currentMsg);
+      const okText = "#" + writeCount + " OK via " + mode + ": [" + displayBuffer(currentBuffer) + "]";
       updateLastResult(okText);
       addLog("sent " + okText);
     }
@@ -648,55 +642,41 @@ async function sendRawAscii(msg) {
   }
 }
 
-/*
-  Phone controls:
-  - Connection sends nothing.
-  - Press and hold a direction/rotation button to stream at 20 Hz.
-  - Releasing the last active button sends one stop command: 0,0,0\r.
-*/
+// Setup des événements pointeurs (inchangé)
 for (const btn of document.querySelectorAll("[data-key]")) {
   const key = btn.dataset.key;
 
   btn.addEventListener("pointerdown", async e => {
     e.preventDefault();
-
-    try {
-      btn.setPointerCapture(e.pointerId);
-    } catch (_) {}
-
+    try { btn.setPointerCapture(e.pointerId); } catch (_) {}
     btn.classList.add("active");
     activeKeys.add(key);
     updateKeyDebug();
-
     startMotionLoop();
-    await sendRawAscii(getMotionMessage());
+    await sendRawBuffer(getMotionMessageBuffer());
   });
 
   btn.addEventListener("pointerup", async e => {
     e.preventDefault();
-
     btn.classList.remove("active");
     activeKeys.delete(key);
     updateKeyDebug();
-
     if (activeKeys.size === 0) {
       await sendStopAfterRelease();
     } else {
-      await sendRawAscii(getMotionMessage());
+      await sendRawBuffer(getMotionMessageBuffer());
     }
   });
 
   btn.addEventListener("pointercancel", async e => {
     e.preventDefault();
-
     btn.classList.remove("active");
     activeKeys.delete(key);
     updateKeyDebug();
-
     if (activeKeys.size === 0) {
       await sendStopAfterRelease();
     } else {
-      await sendRawAscii(getMotionMessage());
+      await sendRawBuffer(getMotionMessageBuffer());
     }
   });
 
@@ -704,47 +684,40 @@ for (const btn of document.querySelectorAll("[data-key]")) {
     btn.classList.remove("active");
     activeKeys.delete(key);
     updateKeyDebug();
-
     if (activeKeys.size === 0) {
       await sendStopAfterRelease();
     } else {
-      await sendRawAscii(getMotionMessage());
+      await sendRawBuffer(getMotionMessageBuffer());
     }
   });
 }
 
-// Optional keyboard control for testing from a computer.
 window.addEventListener("keydown", e => {
   const k = e.key.toLowerCase();
-
   if ("zsqdae".includes(k)) {
     activeKeys.add(k);
     updateKeyDebug();
-
     startMotionLoop();
-    sendRawAscii(getMotionMessage());
+    sendRawBuffer(getMotionMessageBuffer());
   }
 });
 
 window.addEventListener("keyup", e => {
   const k = e.key.toLowerCase();
-
   if ("zsqdae".includes(k)) {
     activeKeys.delete(k);
     updateKeyDebug();
-
     if (activeKeys.size === 0) {
       sendStopAfterRelease();
     } else {
-      sendRawAscii(getMotionMessage());
+      sendRawBuffer(getMotionMessageBuffer());
     }
   }
 });
 
-// Send manual command when pressing Enter.
 document.getElementById("manualInput").addEventListener("keydown", e => {
   if (e.key === "Enter") {
-    sendManualAscii();
+    sendManualBinary();
   }
 });
 </script>
