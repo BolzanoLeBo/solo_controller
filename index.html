@@ -264,12 +264,12 @@
     </div>
 
     <div class="test-row">
-      <button class="small" onclick="testBinaryCommand(0, 1, 0)">Test forward CR</button>
-      <button class="small" onclick="testBinaryCommand(0, 0, 0)">Test stop CR</button>
+      <button class="small" onclick="testBinaryCommand(0, 1, 0)">Test forward</button>
+      <button class="small" onclick="testBinaryCommand(0, 0, 0)">Test stop</button>
     </div>
 
     <div class="hint">
-      Les valeurs sont envoyées sous forme d'octets bruts (0 ou 1, ou 255 pour -1) encapsulés dans <code>% ... \r%</code>.
+      Format envoyé : <code>% [X] [Y] [Z] % \r</code> où X, Y, Z sont des octets binaires bruts et le reste est en ASCII (séparés par des espaces).
     </div>
   </div>
 
@@ -368,7 +368,6 @@ function setStatus(text) {
   document.getElementById("status").textContent = text;
 }
 
-// Convertit un Uint8Array en chaîne Hexadécimale lisible pour le débug
 function displayBuffer(buffer) {
   return Array.from(buffer).map(b => '0x' + b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
 }
@@ -483,32 +482,36 @@ function onDisconnected() {
   addLog("GATT disconnected");
 }
 
-// Génère le Uint8Array final au format : [%][VX][VY][WZ][LineEnding][%]
+// Nouvelle structure générant précisément : % [X] [Y] [Z] % \r
 function buildBinaryMessage(vx, vy, wz, endingType = "cr") {
-  // Déterminer la taille des fins de ligne
   let endingBytes = [];
   if (endingType === "cr") endingBytes = [13];       // \r
   if (endingType === "lf") endingBytes = [10];       // \n
   if (endingType === "crlf") endingBytes = [13, 10];  // \r\n
 
-  // Structure : '%' (1 octet) + 3 axes (3 octets) + fin de ligne (0-2 octets) + '%' (1 octet)
-  const totalLength = 1 + 3 + endingBytes.length + 1;
+  // Taille totale : '%' (1) + ' ' (1) + X (1) + ' ' (1) + Y (1) + ' ' (1) + Z (1) + ' ' (1) + '%' (1) + ending (0~2)
+  const totalLength = 9 + endingBytes.length;
   const buffer = new Uint8Array(totalLength);
 
   let index = 0;
-  buffer[index++] = 37; // '%' en ASCII
+  buffer[index++] = 37; // '%'
+  buffer[index++] = 32; // ' ' (Espace)
+  
+  buffer[index++] = vx & 0xFF; // Octet brut X
+  buffer[index++] = 32; // ' ' (Espace)
+  
+  buffer[index++] = vy & 0xFF; // Octet brut Y
+  buffer[index++] = 32; // ' ' (Espace)
+  
+  buffer[index++] = wz & 0xFF; // Octet brut Z
+  buffer[index++] = 32; // ' ' (Espace)
+  
+  buffer[index++] = 37; // '%'
 
-  // Stockage des valeurs d'axes en octets bruts (0, 1, ou 255 pour -1)
-  buffer[index++] = vx & 0xFF;
-  buffer[index++] = vy & 0xFF;
-  buffer[index++] = wz & 0xFF;
-
-  // Ajout des fins de ligne
+  // Fin de ligne insérée juste après le dernier '%'
   for (let b of endingBytes) {
     buffer[index++] = b;
   }
-
-  buffer[index++] = 37; // '%' en ASCII
 
   return buffer;
 }
@@ -532,7 +535,7 @@ async function sendManualBinary() {
 
   const parts = text.split(',').map(Number);
   if (parts.length !== 3 || parts.some(isNaN)) {
-    alert("Veuillez entrer 3 nombres séparés par des virgules (ex: 0,1,0)");
+    alert("Veuillez entrer 3 nombres séparés par des virgules (ex: 0,1,-1)");
     return;
   }
 
@@ -607,7 +610,6 @@ async function writeGatt(data) {
   throw new Error("No supported GATT write method");
 }
 
-// Reçoit un Uint8Array au lieu d'une chaîne ASCII
 async function sendRawBuffer(buffer) {
   if (!rxChar) {
     setStatus("Not connected");
@@ -642,7 +644,6 @@ async function sendRawBuffer(buffer) {
   }
 }
 
-// Setup des événements pointeurs (inchangé)
 for (const btn of document.querySelectorAll("[data-key]")) {
   const key = btn.dataset.key;
 
