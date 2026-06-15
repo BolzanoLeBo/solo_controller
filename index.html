@@ -241,10 +241,10 @@
   <div id="props">RX properties: unknown</div>
 
   <div class="manual-box">
-    <div><b>Manual Binary Send (Comma separated 3 numbers)</b></div>
+    <div><b>Manual Binary Send (Float values between -1.0 and 1.0)</b></div>
 
     <div class="manual-row">
-      <input id="manualInput" type="text" placeholder="Example: 0,1,-1">
+      <input id="manualInput" type="text" placeholder="Example: 0, 0.5, -1">
 
       <select id="endingSelect">
         <option value="cr" selected>CR \r</option>
@@ -264,12 +264,12 @@
     </div>
 
     <div class="test-row">
-      <button class="small" onclick="testBinaryCommand(0, 1, 0)">Test forward</button>
-      <button class="small" onclick="testBinaryCommand(0, 0, 0)">Test stop</button>
+      <button class="small" onclick="testBinaryCommand(0, 1, 0)">Test forward (1.0)</button>
+      <button class="small" onclick="testBinaryCommand(0, 0, 0)">Test stop (0.0)</button>
     </div>
 
     <div class="hint">
-      Format envoyé : <code>% [X] [Y] [Z] % \r</code> où X, Y, Z sont des octets binaires bruts et le reste est en ASCII (séparés par des espaces).
+      Format envoyé : <code>% [X] [Y] [Z] % \r</code> où X, Y, Z sont convertis en virgule fixe <b>Q0.7</b> (1 octet chacun).
     </div>
   </div>
 
@@ -482,33 +482,43 @@ function onDisconnected() {
   addLog("GATT disconnected");
 }
 
-// Nouvelle structure générant précisément : % [X] [Y] [Z] % \r
+// Convertit un flottant (-1.0 à 1.0) vers un octet au format fixe Q0.7
+function floatToQ07(value) {
+  // Multiplication par 2^7 (128)
+  let qValue = Math.round(value * 128);
+  
+  // Saturation des limites matérielles Q0.7 (-128 à 127)
+  if (qValue > 127) qValue = 127;
+  if (qValue < -128) qValue = -128;
+  
+  // Transformation en un octet non signé propre pour Uint8Array
+  return qValue & 0xFF;
+}
+
 function buildBinaryMessage(vx, vy, wz, endingType = "cr") {
   let endingBytes = [];
   if (endingType === "cr") endingBytes = [13];       // \r
   if (endingType === "lf") endingBytes = [10];       // \n
   if (endingType === "crlf") endingBytes = [13, 10];  // \r\n
 
-  // Taille totale : '%' (1) + ' ' (1) + X (1) + ' ' (1) + Y (1) + ' ' (1) + Z (1) + ' ' (1) + '%' (1) + ending (0~2)
   const totalLength = 9 + endingBytes.length;
   const buffer = new Uint8Array(totalLength);
 
   let index = 0;
   buffer[index++] = 37; // '%'
-  buffer[index++] = 32; // ' ' (Espace)
+  buffer[index++] = 32; // ' '
   
-  buffer[index++] = vx & 0xFF; // Octet brut X
-  buffer[index++] = 32; // ' ' (Espace)
+  buffer[index++] = floatToQ07(vx); // X en Q0.7 (ex: 1.0 -> 0x7F, -1.0 -> 0x80)
+  buffer[index++] = 32; // ' '
   
-  buffer[index++] = vy & 0xFF; // Octet brut Y
-  buffer[index++] = 32; // ' ' (Espace)
+  buffer[index++] = floatToQ07(vy); // Y en Q0.7
+  buffer[index++] = 32; // ' '
   
-  buffer[index++] = wz & 0xFF; // Octet brut Z
-  buffer[index++] = 32; // ' ' (Espace)
+  buffer[index++] = floatToQ07(wz); // Z en Q0.7
+  buffer[index++] = 32; // ' '
   
   buffer[index++] = 37; // '%'
 
-  // Fin de ligne insérée juste après le dernier '%'
   for (let b of endingBytes) {
     buffer[index++] = b;
   }
@@ -535,7 +545,7 @@ async function sendManualBinary() {
 
   const parts = text.split(',').map(Number);
   if (parts.length !== 3 || parts.some(isNaN)) {
-    alert("Veuillez entrer 3 nombres séparés par des virgules (ex: 0,1,-1)");
+    alert("Veuillez entrer 3 nombres flottants séparés par des virgules (ex: 0, 0.5, -1)");
     return;
   }
 
