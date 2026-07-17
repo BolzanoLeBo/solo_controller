@@ -269,7 +269,7 @@
     </div>
 
     <div class="hint">
-      Format envoyé : <code>% [X] [Y] [Z] % \r</code> où X, Y, Z sont convertis en virgule fixe <b>Q0.7</b> (1 octet chacun).
+      Format envoyé : <code>%[X][Y][Z]%\r</code> où X, Y, Z sont convertis en virgule fixe <b>Q0.7</b> (1 octet chacun).
     </div>
   </div>
 
@@ -501,21 +501,16 @@ function buildBinaryMessage(vx, vy, wz, endingType = "cr") {
   if (endingType === "lf") endingBytes = [10];       // \n
   if (endingType === "crlf") endingBytes = [13, 10];  // \r\n
 
-  const totalLength = 9 + endingBytes.length;
+  // Total length is exactly 5 bytes for payload data plus ending character lengths
+  const totalLength = 5 + endingBytes.length;
   const buffer = new Uint8Array(totalLength);
 
   let index = 0;
   buffer[index++] = 37; // '%'
-  buffer[index++] = 32; // ' '
   
   buffer[index++] = floatToQ07(vx); // X en Q0.7 (ex: 1.0 -> 0x7F, -1.0 -> 0x80)
-  buffer[index++] = 32; // ' '
-  
   buffer[index++] = floatToQ07(vy); // Y en Q0.7
-  buffer[index++] = 32; // ' '
-  
   buffer[index++] = floatToQ07(wz); // Z en Q0.7
-  buffer[index++] = 32; // ' '
   
   buffer[index++] = 37; // '%'
 
