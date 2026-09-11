@@ -241,7 +241,7 @@
   <div id="props">RX properties: unknown</div>
 
   <div class="manual-box">
-    <div><b>Manual Binary Send (Float values between -1.0 and 1.0)</b></div>
+    <div><b>Manual Binary Send (Q0.7 values between -1.0 and 1.0)</b></div>
 
     <div class="manual-row">
       <input id="manualInput" type="text" placeholder="Example: 0, 0.5, -1">
@@ -264,7 +264,7 @@
     </div>
 
     <div class="test-row">
-      <button class="small" onclick="testBinaryCommand(0, 1, 0)">Test forward (1.0)</button>
+      <button class="small" onclick="testBinaryCommand(0, 0.675, 0)">Test forward (0.675)</button>
       <button class="small" onclick="testBinaryCommand(0, 0, 0)">Test stop (0.0)</button>
     </div>
 
@@ -358,9 +358,15 @@ let sending = false;
 let writeCount = 0;
 let logLines = [];
 
-function axis(neg, pos) {
-  if (neg && !pos) return -1;
-  if (pos && !neg) return 1;
+const MOTION_LIMITS = {
+  vx: { negative: -0.85, positive: 1.0 },
+  vy: { negative: -0.675, positive: 0.675 },
+  wz: { negative: -0.9, positive: 0.9 }
+};
+
+function axis(neg, pos, limits) {
+  if (neg && !pos) return limits.negative;
+  if (pos && !neg) return limits.positive;
   return 0;
 }
 
@@ -522,9 +528,9 @@ function buildBinaryMessage(vx, vy, wz, endingType = "cr") {
 }
 
 function getMotionMessageBuffer() {
-  const vx = axis(activeKeys.has("q"), activeKeys.has("d"));
-  const vy = axis(activeKeys.has("s"), activeKeys.has("z"));
-  const wz = axis(activeKeys.has("a"), activeKeys.has("e"));
+  const vx = axis(activeKeys.has("q"), activeKeys.has("d"), MOTION_LIMITS.vx);
+  const vy = axis(activeKeys.has("s"), activeKeys.has("z"), MOTION_LIMITS.vy);
+  const wz = axis(activeKeys.has("a"), activeKeys.has("e"), MOTION_LIMITS.wz);
   return buildBinaryMessage(vx, vy, wz, "cr");
 }
 
