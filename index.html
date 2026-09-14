@@ -264,7 +264,7 @@
     </div>
 
     <div class="test-row">
-      <button class="small" onclick="testBinaryCommand(0, 0.675, 0)">Test forward (0.675)</button>
+      <button class="small" onclick="testBinaryCommand(0.675, 0, 0)">Test forward (0.675)</button>
       <button class="small" onclick="testBinaryCommand(0, 0, 0)">Test stop (0.0)</button>
     </div>
 
@@ -358,6 +358,9 @@ let sending = false;
 let writeCount = 0;
 let logLines = [];
 
+const MOTION_RAMP_STEP = 0.1;
+let currentMotion = { vx: 0, vy: 0, wz: 0 };
+
 const MOTION_LIMITS = {
   vx: { negative: -0.85, positive: 1.0 },
   vy: { negative: -0.675, positive: 0.675 },
@@ -368,6 +371,46 @@ function axis(neg, pos, limits) {
   if (neg && !pos) return limits.negative;
   if (pos && !neg) return limits.positive;
   return 0;
+}
+
+function getTargetMotion() {
+  return {
+    // Forward/backward use X, left/right use Y, and rotation uses Z.
+    vx: axis(activeKeys.has("s"), activeKeys.has("z"), MOTION_LIMITS.vx),
+    vy: axis(activeKeys.has("q"), activeKeys.has("d"), MOTION_LIMITS.vy),
+    wz: axis(activeKeys.has("a"), activeKeys.has("e"), MOTION_LIMITS.wz)
+  };
+}
+
+function rampAxis(current, target) {
+  // Stopping is immediate; acceleration toward an active command is gradual.
+  if (target === 0) return 0;
+
+  const difference = target - current;
+  if (Math.abs(difference) <= MOTION_RAMP_STEP) return target;
+
+  // Round to avoid values such as 0.30000000000000004 in the motion state.
+  return Number((current + Math.sign(difference) * MOTION_RAMP_STEP).toFixed(3));
+}
+
+function updateCurrentMotion() {
+  const target = getTargetMotion();
+  currentMotion.vx = rampAxis(currentMotion.vx, target.vx);
+  currentMotion.vy = rampAxis(currentMotion.vy, target.vy);
+  currentMotion.wz = rampAxis(currentMotion.wz, target.wz);
+}
+
+function stopInactiveAxes() {
+  const target = getTargetMotion();
+  if (target.vx === 0) currentMotion.vx = 0;
+  if (target.vy === 0) currentMotion.vy = 0;
+  if (target.wz === 0) currentMotion.wz = 0;
+}
+
+function resetCurrentMotion() {
+  currentMotion.vx = 0;
+  currentMotion.vy = 0;
+  currentMotion.wz = 0;
 }
 
 function setStatus(text) {
@@ -458,6 +501,7 @@ async function connectBle() {
 async function disconnectBle() {
   try {
     activeKeys.clear();
+    resetCurrentMotion();
     updateKeyDebug();
     stopMotionLoop();
     if (device && device.gatt && device.gatt.connected) {
@@ -478,6 +522,7 @@ async function disconnectBle() {
 
 function onDisconnected() {
   activeKeys.clear();
+  resetCurrentMotion();
   updateKeyDebug();
   stopMotionLoop();
   rxChar = null;
@@ -528,14 +573,12 @@ function buildBinaryMessage(vx, vy, wz, endingType = "cr") {
 }
 
 function getMotionMessageBuffer() {
-  const vx = axis(activeKeys.has("q"), activeKeys.has("d"), MOTION_LIMITS.vx);
-  const vy = axis(activeKeys.has("s"), activeKeys.has("z"), MOTION_LIMITS.vy);
-  const wz = axis(activeKeys.has("a"), activeKeys.has("e"), MOTION_LIMITS.wz);
-  return buildBinaryMessage(vx, vy, wz, "cr");
+  return buildBinaryMessage(currentMotion.vx, currentMotion.vy, currentMotion.wz, "cr");
 }
 
 async function sendMotionCommand() {
   if (activeKeys.size === 0) return;
+  updateCurrentMotion();
   await sendRawBuffer(getMotionMessageBuffer());
 }
 
@@ -562,6 +605,7 @@ async function testBinaryCommand(vx, vy, wz) {
 
 async function stopRobot() {
   activeKeys.clear();
+  resetCurrentMotion();
   updateKeyDebug();
   stopMotionLoop();
   await sendRawBuffer(buildBinaryMessage(0, 0, 0, "cr"));
@@ -569,6 +613,7 @@ async function stopRobot() {
 
 async function sendStopAfterRelease() {
   stopMotionLoop();
+  resetCurrentMotion();
   await sendRawBuffer(buildBinaryMessage(0, 0, 0, "cr"));
 }
 
@@ -663,6 +708,7 @@ for (const btn of document.querySelectorAll("[data-key]")) {
     try { btn.setPointerCapture(e.pointerId); } catch (_) {}
     btn.classList.add("active");
     activeKeys.add(key);
+    stopInactiveAxes();
     updateKeyDebug();
     startMotionLoop();
     await sendRawBuffer(getMotionMessageBuffer());
@@ -672,6 +718,7 @@ for (const btn of document.querySelectorAll("[data-key]")) {
     e.preventDefault();
     btn.classList.remove("active");
     activeKeys.delete(key);
+    stopInactiveAxes();
     updateKeyDebug();
     if (activeKeys.size === 0) {
       await sendStopAfterRelease();
@@ -684,6 +731,7 @@ for (const btn of document.querySelectorAll("[data-key]")) {
     e.preventDefault();
     btn.classList.remove("active");
     activeKeys.delete(key);
+    stopInactiveAxes();
     updateKeyDebug();
     if (activeKeys.size === 0) {
       await sendStopAfterRelease();
@@ -695,6 +743,7 @@ for (const btn of document.querySelectorAll("[data-key]")) {
   btn.addEventListener("lostpointercapture", async () => {
     btn.classList.remove("active");
     activeKeys.delete(key);
+    stopInactiveAxes();
     updateKeyDebug();
     if (activeKeys.size === 0) {
       await sendStopAfterRelease();
@@ -708,6 +757,7 @@ window.addEventListener("keydown", e => {
   const k = e.key.toLowerCase();
   if ("zsqdae".includes(k)) {
     activeKeys.add(k);
+    stopInactiveAxes();
     updateKeyDebug();
     startMotionLoop();
     sendRawBuffer(getMotionMessageBuffer());
@@ -718,6 +768,7 @@ window.addEventListener("keyup", e => {
   const k = e.key.toLowerCase();
   if ("zsqdae".includes(k)) {
     activeKeys.delete(k);
+    stopInactiveAxes();
     updateKeyDebug();
     if (activeKeys.size === 0) {
       sendStopAfterRelease();
