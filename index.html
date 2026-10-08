@@ -1,6 +1,7 @@
 <!doctype html>
 <html>
 <head>
+  <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SOLO12 BLE Controller</title>
 
@@ -59,6 +60,11 @@
     button.active {
       background: #666;
       transform: scale(0.97);
+    }
+
+    button:disabled {
+      opacity: 0.45;
+      transform: none;
     }
 
     .small {
@@ -229,12 +235,12 @@
   <h2>SOLO12 BLE Controller</h2>
 
   <div class="top-bar">
-    <button class="small connect" onclick="connectBle()">Connect</button>
-    <button class="small disconnect" onclick="disconnectBle()">Disconnect</button>
+    <button id="connectButton" class="small connect" onclick="connectBle()">Connect</button>
+    <button id="disconnectButton" class="small disconnect" onclick="disconnectBle()" disabled>Disconnect</button>
     <button class="small stop" onclick="stopRobot()">STOP</button>
   </div>
 
-  <div id="status">Disconnected</div>
+  <div id="status" role="status">Disconnected</div>
   <div id="tx">TX: waiting</div>
   <div id="keys">Keys:</div>
   <div id="lastResult">Last write: none</div>
@@ -254,18 +260,18 @@
       </select>
 
       <select id="writeModeSelect">
-        <option value="withResponse" selected>Write response</option>
+        <option value="auto" selected>Auto (prefer response)</option>
+        <option value="withResponse">Write response</option>
         <option value="withoutResponse">Write no resp</option>
         <option value="legacy">Legacy write</option>
-        <option value="auto">Auto</option>
       </select>
 
-      <button class="small" onclick="sendManualBinary()">Send</button>
+      <button class="small" data-requires-connection onclick="sendManualBinary()" disabled>Send</button>
     </div>
 
     <div class="test-row">
-      <button class="small" onclick="testBinaryCommand(0.675, 0, 0)">Test forward (0.675)</button>
-      <button class="small" onclick="testBinaryCommand(0, 0, 0)">Test stop (0.0)</button>
+      <button class="small" data-requires-connection onclick="testBinaryCommand(MOTION_LIMITS.vx.positive, 0, 0)" disabled>Test forward</button>
+      <button class="small" data-requires-connection onclick="stopRobot()" disabled>Test stop (0.0)</button>
     </div>
 
     <div class="hint">
@@ -343,446 +349,6 @@
     <div id="sendLog">No writes yet.</div>
   </div>
 
-<script>
-const DEVICE_NAME = "SOLO12";
-const SERVICE_UUID = "49535343-fe7d-4ae5-8fa9-9fafd205e455";
-const RX_UUID      = "49535343-8841-43f4-a8d4-ecbe34729bb3";
-
-let device = null;
-let rxChar = null;
-let activeKeys = new Set();
-
-let sendTimer = null;
-let sendQueue = [];
-let sending = false;
-let writeCount = 0;
-let logLines = [];
-
-const MOTION_RAMP_STEP = 0.1;
-let currentMotion = { vx: 0, vy: 0, wz: 0 };
-
-const MOTION_LIMITS = {
-  vx: { negative: -0.85, positive: 1.0 },
-  vy: { negative: -0.675, positive: 0.675 },
-  wz: { negative: -0.9, positive: 0.9 }
-};
-
-function axis(neg, pos, limits) {
-  if (neg && !pos) return limits.negative;
-  if (pos && !neg) return limits.positive;
-  return 0;
-}
-
-function getTargetMotion() {
-  return {
-    // Forward/backward use X, left/right use Y, and rotation uses Z.
-    vx: axis(activeKeys.has("s"), activeKeys.has("z"), MOTION_LIMITS.vx),
-    vy: axis(activeKeys.has("q"), activeKeys.has("d"), MOTION_LIMITS.vy),
-    wz: axis(activeKeys.has("a"), activeKeys.has("e"), MOTION_LIMITS.wz)
-  };
-}
-
-function rampAxis(current, target) {
-  // Stopping is immediate; acceleration toward an active command is gradual.
-  if (target === 0) return 0;
-
-  const difference = target - current;
-  if (Math.abs(difference) <= MOTION_RAMP_STEP) return target;
-
-  // Round to avoid values such as 0.30000000000000004 in the motion state.
-  return Number((current + Math.sign(difference) * MOTION_RAMP_STEP).toFixed(3));
-}
-
-function updateCurrentMotion() {
-  const target = getTargetMotion();
-  currentMotion.vx = rampAxis(currentMotion.vx, target.vx);
-  currentMotion.vy = rampAxis(currentMotion.vy, target.vy);
-  currentMotion.wz = rampAxis(currentMotion.wz, target.wz);
-}
-
-function stopInactiveAxes() {
-  const target = getTargetMotion();
-  if (target.vx === 0) currentMotion.vx = 0;
-  if (target.vy === 0) currentMotion.vy = 0;
-  if (target.wz === 0) currentMotion.wz = 0;
-}
-
-function resetCurrentMotion() {
-  currentMotion.vx = 0;
-  currentMotion.vy = 0;
-  currentMotion.wz = 0;
-}
-
-function setStatus(text) {
-  document.getElementById("status").textContent = text;
-}
-
-function displayBuffer(buffer) {
-  return Array.from(buffer).map(b => '0x' + b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
-}
-
-function updateKeyDebug() {
-  document.getElementById("keys").textContent =
-    "Keys: " + Array.from(activeKeys).join(",");
-}
-
-function updateTxDebug(buffer) {
-  if (typeof buffer === "string") {
-    document.getElementById("tx").textContent = "TX: " + buffer;
-  } else {
-    document.getElementById("tx").textContent = "TX (Hex): " + displayBuffer(buffer);
-  }
-}
-
-function updateLastResult(text) {
-  document.getElementById("lastResult").textContent = "Last write: " + text;
-}
-
-function updateProps() {
-  if (!rxChar) {
-    document.getElementById("props").textContent = "RX properties: unknown";
-    return;
-  }
-  const p = rxChar.properties;
-  const text = "write=" + p.write + ", writeWithoutResponse=" + p.writeWithoutResponse + ", notify=" + p.notify + ", read=" + p.read;
-  document.getElementById("props").textContent = "RX properties: " + text;
-  addLog("RX characteristic properties: " + text);
-}
-
-function addLog(text) {
-  const stamp = new Date().toLocaleTimeString();
-  logLines.unshift(stamp + "  " + text);
-  logLines = logLines.slice(0, 24);
-  document.getElementById("sendLog").textContent = logLines.join("\n");
-}
-
-function startMotionLoop() {
-  if (!sendTimer) {
-    sendTimer = setInterval(sendMotionCommand, 50);
-  }
-}
-
-function stopMotionLoop() {
-  if (sendTimer) {
-    clearInterval(sendTimer);
-    sendTimer = null;
-  }
-}
-
-async function connectBle() {
-  try {
-    if (!navigator.bluetooth) {
-      setStatus("Web Bluetooth unavailable in this browser");
-      return;
-    }
-    setStatus("Scanning...");
-    device = await navigator.bluetooth.requestDevice({
-      acceptAllDevices: true,
-      optionalServices: [SERVICE_UUID]
-    });
-    device.addEventListener("gattserverdisconnected", onDisconnected);
-    setStatus("Connecting...");
-    const server = await device.gatt.connect();
-    const service = await server.getPrimaryService(SERVICE_UUID);
-    rxChar = await service.getCharacteristic(RX_UUID);
-
-    setStatus("Connected to " + (device.name || "BLE device"));
-    updateTxDebug("waiting");
-    updateLastResult("none");
-    updateProps();
-    addLog("connected; no data sent");
-  } catch (err) {
-    setStatus("Error: " + err.message);
-    addLog("connect error: " + err.message);
-    console.error(err);
-  }
-}
-
-async function disconnectBle() {
-  try {
-    activeKeys.clear();
-    resetCurrentMotion();
-    updateKeyDebug();
-    stopMotionLoop();
-    if (device && device.gatt && device.gatt.connected) {
-      device.gatt.disconnect();
-    }
-    rxChar = null;
-    setStatus("Disconnected");
-    updateTxDebug("waiting");
-    updateLastResult("none");
-    updateProps();
-    addLog("disconnected; no data sent");
-  } catch (err) {
-    console.error("Disconnect failed:", err);
-    setStatus("Disconnect error: " + err.message);
-    addLog("disconnect error: " + err.message);
-  }
-}
-
-function onDisconnected() {
-  activeKeys.clear();
-  resetCurrentMotion();
-  updateKeyDebug();
-  stopMotionLoop();
-  rxChar = null;
-  setStatus("Disconnected");
-  updateTxDebug("waiting");
-  updateLastResult("none");
-  updateProps();
-  addLog("GATT disconnected");
-}
-
-// Convertit un flottant (-1.0 à 1.0) vers un octet au format fixe Q0.7
-function floatToQ07(value) {
-  // Multiplication par 2^7 (128)
-  let qValue = Math.round(value * 128);
-  
-  // Saturation des limites matérielles Q0.7 (-128 à 127)
-  if (qValue > 127) qValue = 127;
-  if (qValue < -128) qValue = -128;
-  
-  // Transformation en un octet non signé propre pour Uint8Array
-  return qValue & 0xFF;
-}
-
-function buildBinaryMessage(vx, vy, wz, endingType = "cr") {
-  let endingBytes = [];
-  if (endingType === "cr") endingBytes = [13];       // \r
-  if (endingType === "lf") endingBytes = [10];       // \n
-  if (endingType === "crlf") endingBytes = [13, 10];  // \r\n
-
-  // Total length is exactly 5 bytes for payload data plus ending character lengths
-  const totalLength = 5 + endingBytes.length;
-  const buffer = new Uint8Array(totalLength);
-
-  let index = 0;
-  buffer[index++] = 37; // '%'
-  
-  buffer[index++] = floatToQ07(vx); // X en Q0.7 (ex: 1.0 -> 0x7F, -1.0 -> 0x80)
-  buffer[index++] = floatToQ07(vy); // Y en Q0.7
-  buffer[index++] = floatToQ07(wz); // Z en Q0.7
-  
-  buffer[index++] = 37; // '%'
-
-  for (let b of endingBytes) {
-    buffer[index++] = b;
-  }
-
-  return buffer;
-}
-
-function getMotionMessageBuffer() {
-  return buildBinaryMessage(currentMotion.vx, currentMotion.vy, currentMotion.wz, "cr");
-}
-
-async function sendMotionCommand() {
-  if (activeKeys.size === 0) return;
-  updateCurrentMotion();
-  await sendRawBuffer(getMotionMessageBuffer());
-}
-
-async function sendManualBinary() {
-  const input = document.getElementById("manualInput");
-  const text = input.value.trim();
-  if (!text.length) return;
-
-  const parts = text.split(',').map(Number);
-  if (parts.length !== 3 || parts.some(isNaN)) {
-    alert("Veuillez entrer 3 nombres flottants séparés par des virgules (ex: 0, 0.5, -1)");
-    return;
-  }
-
-  const endingValue = document.getElementById("endingSelect").value;
-  const buffer = buildBinaryMessage(parts[0], parts[1], parts[2], endingValue);
-  await sendRawBuffer(buffer);
-}
-
-async function testBinaryCommand(vx, vy, wz) {
-  const buffer = buildBinaryMessage(vx, vy, wz, "cr");
-  await sendRawBuffer(buffer);
-}
-
-async function stopRobot() {
-  activeKeys.clear();
-  resetCurrentMotion();
-  updateKeyDebug();
-  stopMotionLoop();
-  await sendRawBuffer(buildBinaryMessage(0, 0, 0, "cr"));
-}
-
-async function sendStopAfterRelease() {
-  stopMotionLoop();
-  resetCurrentMotion();
-  await sendRawBuffer(buildBinaryMessage(0, 0, 0, "cr"));
-}
-
-async function writeGatt(data) {
-  const mode = document.getElementById("writeModeSelect").value;
-
-  if (mode === "withResponse") {
-    if (typeof rxChar.writeValueWithResponse === "function") {
-      await rxChar.writeValueWithResponse(data);
-      return "writeValueWithResponse";
-    }
-    if (typeof rxChar.writeValue === "function") {
-      await rxChar.writeValue(data);
-      return "legacy writeValue fallback";
-    }
-    throw new Error("writeValueWithResponse unavailable");
-  }
-
-  if (mode === "withoutResponse") {
-    if (typeof rxChar.writeValueWithoutResponse === "function") {
-      await rxChar.writeValueWithoutResponse(data);
-      return "writeValueWithoutResponse";
-    }
-    throw new Error("writeValueWithoutResponse unavailable");
-  }
-
-  if (mode === "legacy") {
-    if (typeof rxChar.writeValue === "function") {
-      await rxChar.writeValue(data);
-      return "legacy writeValue";
-    }
-    throw new Error("legacy writeValue unavailable");
-  }
-
-  if (rxChar.properties.write && typeof rxChar.writeValueWithResponse === "function") {
-    await rxChar.writeValueWithResponse(data);
-    return "auto writeValueWithResponse";
-  }
-
-  if (rxChar.properties.writeWithoutResponse && typeof rxChar.writeValueWithoutResponse === "function") {
-    await rxChar.writeValueWithoutResponse(data);
-    return "auto writeValueWithoutResponse";
-  }
-
-  if (typeof rxChar.writeValue === "function") {
-    await rxChar.writeValue(data);
-    return "auto legacy writeValue";
-  }
-
-  throw new Error("No supported GATT write method");
-}
-
-async function sendRawBuffer(buffer) {
-  if (!rxChar) {
-    setStatus("Not connected");
-    updateLastResult("not connected");
-    addLog("not sent: not connected");
-    return;
-  }
-
-  updateTxDebug(buffer);
-  sendQueue.push(buffer);
-
-  if (sending) return;
-  sending = true;
-
-  try {
-    while (sendQueue.length > 0) {
-      const currentBuffer = sendQueue.shift();
-      const mode = await writeGatt(currentBuffer);
-      writeCount += 1;
-
-      const okText = "#" + writeCount + " OK via " + mode + ": [" + displayBuffer(currentBuffer) + "]";
-      updateLastResult(okText);
-      addLog("sent " + okText);
-    }
-  } catch (err) {
-    console.error("Write failed:", err);
-    setStatus("Write error: " + err.message);
-    updateLastResult("ERROR: " + err.message);
-    addLog("write error: " + err.message);
-  } finally {
-    sending = false;
-  }
-}
-
-for (const btn of document.querySelectorAll("[data-key]")) {
-  const key = btn.dataset.key;
-
-  btn.addEventListener("pointerdown", async e => {
-    e.preventDefault();
-    try { btn.setPointerCapture(e.pointerId); } catch (_) {}
-    btn.classList.add("active");
-    activeKeys.add(key);
-    stopInactiveAxes();
-    updateKeyDebug();
-    startMotionLoop();
-    await sendRawBuffer(getMotionMessageBuffer());
-  });
-
-  btn.addEventListener("pointerup", async e => {
-    e.preventDefault();
-    btn.classList.remove("active");
-    activeKeys.delete(key);
-    stopInactiveAxes();
-    updateKeyDebug();
-    if (activeKeys.size === 0) {
-      await sendStopAfterRelease();
-    } else {
-      await sendRawBuffer(getMotionMessageBuffer());
-    }
-  });
-
-  btn.addEventListener("pointercancel", async e => {
-    e.preventDefault();
-    btn.classList.remove("active");
-    activeKeys.delete(key);
-    stopInactiveAxes();
-    updateKeyDebug();
-    if (activeKeys.size === 0) {
-      await sendStopAfterRelease();
-    } else {
-      await sendRawBuffer(getMotionMessageBuffer());
-    }
-  });
-
-  btn.addEventListener("lostpointercapture", async () => {
-    btn.classList.remove("active");
-    activeKeys.delete(key);
-    stopInactiveAxes();
-    updateKeyDebug();
-    if (activeKeys.size === 0) {
-      await sendStopAfterRelease();
-    } else {
-      await sendRawBuffer(getMotionMessageBuffer());
-    }
-  });
-}
-
-window.addEventListener("keydown", e => {
-  const k = e.key.toLowerCase();
-  if ("zsqdae".includes(k)) {
-    activeKeys.add(k);
-    stopInactiveAxes();
-    updateKeyDebug();
-    startMotionLoop();
-    sendRawBuffer(getMotionMessageBuffer());
-  }
-});
-
-window.addEventListener("keyup", e => {
-  const k = e.key.toLowerCase();
-  if ("zsqdae".includes(k)) {
-    activeKeys.delete(k);
-    stopInactiveAxes();
-    updateKeyDebug();
-    if (activeKeys.size === 0) {
-      sendStopAfterRelease();
-    } else {
-      sendRawBuffer(getMotionMessageBuffer());
-    }
-  }
-});
-
-document.getElementById("manualInput").addEventListener("keydown", e => {
-  if (e.key === "Enter") {
-    sendManualBinary();
-  }
-});
-</script>
+<script src="controller.js"></script>
 </body>
 </html>

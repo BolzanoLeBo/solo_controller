@@ -1,0 +1,12 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Controller regression tests</title>
+<pre id="results">Running…</pre>
+<iframe id="controller" src="../index.html" width="800" height="600"></iframe>
+<script>
+document.getElementById("controller").addEventListener("load", event => {
+  const script = event.target.contentDocument.createElement("script");
+  script.src = "tests/controller.test.js";
+  event.target.contentDocument.body.append(script);
+});
+</script>
