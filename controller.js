@@ -32,8 +32,8 @@ const MOTION_RAMP_STEP = 0.1;
 let currentMotion = { vx: 0, vy: 0, wz: 0 };
 
 const MOTION_LIMITS = {
-  vx: { negative: -0.6, positive: 0.6 },
-  vy: { negative: -0.5, positive: 0.5 },
+  vx: { negative: -0.9, positive: 0.9 },
+  vy: { negative: -0.8, positive: 0.8 },
   wz: { negative: -0.9, positive: 0.9 }
 };
 
