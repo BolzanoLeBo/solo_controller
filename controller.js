@@ -32,9 +32,9 @@ const MOTION_RAMP_STEP = 0.1;
 let currentMotion = { vx: 0, vy: 0, wz: 0 };
 
 const MOTION_LIMITS = {
-  vx: { negative: -0.9, positive: 0.9 },
-  vy: { negative: -0.8, positive: 0.8 },
-  wz: { negative: -0.9, positive: 0.9 }
+  vx: { negative: -1.0, positive: 1.0 },
+  vy: { negative: -0.75, positive: 0.75 },
+  wz: { negative: -0.8, positive: 0.8 }
 };
 
 function axis(neg, pos, limits) {
