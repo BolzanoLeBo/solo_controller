@@ -37,9 +37,13 @@ because the RN4870's advertised name and services can be configured.
   must be three finite numbers in `[-1, 1]`. The forward test uses the configured
   forward speed limit. Routine motion logs are sampled once per second.
 
-Timing constants and motion limits are at the top of `controller.js`. Current
-directional limits are X ±0.6, Y ±0.5, rotation ±0.9; acceleration remains 0.1 per
-motion tick. Stopping an inactive axis remains immediate.
+Motion is all-or-nothing: pressing a direction immediately sends its configured
+value, and releasing it immediately zeros that axis. Opposite directions cancel.
+The six **Direction values** fields below the controls independently configure
+vx, -vx, vy, -vy, wz, and -wz. Values apply when editing finishes; invalid entries
+restore the previous value. Positive directions accept 0 to 1 and negative
+directions accept -1 to 0. Defaults are X ±1, Y ±0.75, and rotation ±0.8.
+Timing constants and default values are at the top of `controller.js`.
 
 ## Robot firmware requirement
 

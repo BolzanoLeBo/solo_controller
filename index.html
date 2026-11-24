@@ -130,6 +130,26 @@
       min-width: 180px;
     }
 
+    .motion-values {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .motion-values label {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      text-align: left;
+    }
+
+    .motion-values input {
+      min-width: 0;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
     .hint {
       font-size: 13px;
       color: #aaa;
@@ -343,6 +363,32 @@
       </button>
     </div>
   </div>
+
+  <section class="manual-box" aria-labelledby="motionValuesTitle">
+    <b id="motionValuesTitle">Direction values</b>
+    <div class="motion-values">
+      <label>vx (Front / Z)
+        <input type="number" data-motion-axis="vx" data-direction="positive" min="0" max="1" step="any" required>
+      </label>
+      <label>-vx (Back / S)
+        <input type="number" data-motion-axis="vx" data-direction="negative" min="-1" max="0" step="any" required>
+      </label>
+      <label>vy (Right / D)
+        <input type="number" data-motion-axis="vy" data-direction="positive" min="0" max="1" step="any" required>
+      </label>
+      <label>-vy (Left / Q)
+        <input type="number" data-motion-axis="vy" data-direction="negative" min="-1" max="0" step="any" required>
+      </label>
+      <label>wz (Rot R / E)
+        <input type="number" data-motion-axis="wz" data-direction="positive" min="0" max="1" step="any" required>
+      </label>
+      <label>-wz (Rot L / A)
+        <input type="number" data-motion-axis="wz" data-direction="negative" min="-1" max="0" step="any" required>
+      </label>
+    </div>
+    <div class="hint">Press to send the full value; release to stop. No ramp.
+      Values apply when you finish editing. Positive directions: 0 to 1; negative directions: -1 to 0.</div>
+  </section>
 
   <div class="log-box">
     <b>Browser send log</b>

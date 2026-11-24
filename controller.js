@@ -28,7 +28,6 @@ let writeCount = 0;
 let lastMotionLogAt = -Infinity;
 let logLines = [];
 
-const MOTION_RAMP_STEP = 0.1;
 let currentMotion = { vx: 0, vy: 0, wz: 0 };
 
 const MOTION_LIMITS = {
@@ -52,29 +51,8 @@ function getTargetMotion() {
   };
 }
 
-function rampAxis(current, target) {
-  // Stopping is immediate; acceleration toward an active command is gradual.
-  if (target === 0) return 0;
-
-  const difference = target - current;
-  if (Math.abs(difference) <= MOTION_RAMP_STEP) return target;
-
-  // Round to avoid values such as 0.30000000000000004 in the motion state.
-  return Number((current + Math.sign(difference) * MOTION_RAMP_STEP).toFixed(3));
-}
-
 function updateCurrentMotion() {
-  const target = getTargetMotion();
-  currentMotion.vx = rampAxis(currentMotion.vx, target.vx);
-  currentMotion.vy = rampAxis(currentMotion.vy, target.vy);
-  currentMotion.wz = rampAxis(currentMotion.wz, target.wz);
-}
-
-function stopInactiveAxes() {
-  const target = getTargetMotion();
-  if (target.vx === 0) currentMotion.vx = 0;
-  if (target.vy === 0) currentMotion.vy = 0;
-  if (target.wz === 0) currentMotion.wz = 0;
+  currentMotion = getTargetMotion();
 }
 
 function resetCurrentMotion() {
@@ -526,7 +504,7 @@ function inputsChanged() {
   for (const key of keyboardKeys) activeKeys.add(key);
   for (const key of pointerKeys.values()) activeKeys.add(key);
   if ([...activeKeys].sort().join("") === previous) return;
-  stopInactiveAxes();
+  updateCurrentMotion();
   updateKeyDebug();
   if (activeKeys.size === 0) {
     stopRobot();
@@ -598,6 +576,22 @@ window.addEventListener("keyup", event => {
 document.getElementById("manualInput").addEventListener("keydown", event => {
   if (event.key === "Enter" && !event.repeat) sendManualBinary();
 });
+
+for (const input of document.querySelectorAll("[data-motion-axis]")) {
+  const limits = MOTION_LIMITS[input.dataset.motionAxis];
+  const direction = input.dataset.direction;
+  input.value = limits[direction];
+  input.addEventListener("change", () => {
+    if (!input.checkValidity() || !Number.isFinite(input.valueAsNumber)) {
+      input.reportValidity();
+      input.value = limits[direction];
+      return;
+    }
+    limits[direction] = input.valueAsNumber;
+    updateCurrentMotion();
+    if (canControl() && activeKeys.size > 0) sendRawBuffer(getMotionMessageBuffer());
+  });
+}
 
 document.getElementById("writeModeSelect").addEventListener("change", stopRobot);
 

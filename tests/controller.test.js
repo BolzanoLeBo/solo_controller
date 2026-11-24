@@ -104,7 +104,7 @@ const cases = [
     assert([...buildBinaryMessage(1, -1, 0.5)].join() === "37,127,128,64,37,13", "Incorrect wire format");
     assert(buildBinaryMessage(0, 0, 0, "crlf").length === 7, "CRLF missing");
     assert(buildBinaryMessage(0, 0, 0, "none").length === 5, "Unexpected ending");
-    assert(MOTION_LIMITS.vx.positive === 0.6 && MOTION_LIMITS.vy.positive === 0.5, "User limits changed");
+    assert(MOTION_LIMITS.vx.positive === 1 && MOTION_LIMITS.vy.positive === 0.75, "User limits changed");
   }],
   ["transient first connection failure retries without a second chooser", async () => {
     const before = chooserCalls;
@@ -271,9 +271,48 @@ const cases = [
     keyboard("keydown", "z", { repeat: true });
     await delay(1);
     assert(mock.writes.length === 2, "Key repeat added writes");
-    assert(mock.writes[1].bytes[1] === 13, "Initial acceleration step changed");
+    assert(mock.writes[1].bytes[1] === 127, "First press did not send full speed");
     keyboard("keyup", "z");
     await until(() => zero(mock.writes.at(-1).bytes));
+  }],
+  ["all six edited direction values apply on first press and release stops", async () => {
+    const mock = await connectMock();
+    const directions = [
+      ["vx", "positive", "z", 0.4, 1, 51], ["vx", "negative", "s", -0.3, 1, 218],
+      ["vy", "positive", "d", 0.2, 2, 26], ["vy", "negative", "q", -0.5, 2, 192],
+      ["wz", "positive", "e", 0.6, 3, 77], ["wz", "negative", "a", -0.7, 3, 166]
+    ];
+    for (const [axis, direction, key, value, byte, expected] of directions) {
+      const input = document.querySelector(`[data-motion-axis="${axis}"][data-direction="${direction}"]`);
+      const original = input.value;
+      input.value = value;
+      input.dispatchEvent(new Event("change"));
+      pointer("pointerdown", 50, key);
+      await until(() => mock.writes.at(-1).bytes[byte] === expected);
+      pointer("pointerup", 50, key);
+      await until(() => zero(mock.writes.at(-1).bytes));
+      input.value = original;
+      input.dispatchEvent(new Event("change"));
+    }
+  }],
+  ["opposite directions cancel and releasing one restores full speed", async () => {
+    const mock = await connectMock();
+    keyboard("keydown", "z");
+    await until(() => mock.writes.at(-1).bytes[1] === 127);
+    keyboard("keydown", "s");
+    await until(() => zero(mock.writes.at(-1).bytes));
+    keyboard("keyup", "z");
+    await until(() => mock.writes.at(-1).bytes[1] === 128);
+    keyboard("keyup", "s");
+    await until(() => zero(mock.writes.at(-1).bytes));
+  }],
+  ["invalid direction edits retain the previous value", async () => {
+    const input = document.querySelector('[data-motion-axis="vx"][data-direction="positive"]');
+    for (const value of ["", "1.1", "-0.1", "Infinity"]) {
+      input.value = value;
+      input.dispatchEvent(new Event("change"));
+      assert(MOTION_LIMITS.vx.positive === 1 && input.value === "1", "Invalid direction value accepted");
+    }
   }],
   ["keyboard and pointer holds are independent and duplicate releases ignored", async () => {
     const mock = await connectMock();
